@@ -1,0 +1,624 @@
+# modules/mod_model_pipeline.R
+
+# UI function for the model pipeline module
+modelPipelineRelaxUI <- function(id) {
+  ns <- NS(id)
+  
+  tabPanel("Relaxed Model",
+           fluidPage(
+             
+             fluidRow(
+               # Left column - Control elements
+               column(3,
+                      # Display of current main variables (readonly)
+                      wellPanel(
+                        h4("Current Main Variables"),
+                        tags$div(
+                          tags$strong("Target Variable: "),
+                          textOutput(ns("current_target_var"), inline = TRUE)
+                        ),
+                        tags$div(
+                          tags$strong("Weighting: "),
+                          textOutput(ns("current_weight_var"), inline = TRUE)
+                        ),
+                        tags$div(
+                          tags$strong("Offset: "),
+                          textOutput(ns("current_offset_var"), inline = TRUE)
+                        )
+                      ),
+                      
+                      # Feature selection for the model
+                      wellPanel(
+                        h4("Features for the Model"),
+                        uiOutput(ns("feature_selection_ui")),
+                        hr(),
+                        # Number of selected features
+                        tags$div(
+                          tags$strong("Number of selected features: "),
+                          textOutput(ns("num_selected_features"), inline = TRUE)
+                        )
+                      ),
+                      
+                      # Model configuration
+                      wellPanel(
+                        h4("Model Configuration"),
+                        
+                        # Sparse Matrix Option
+                        checkboxInput(ns("sparse_matrix"), "Use Sparse Matrix", value = TRUE),
+                        
+                        
+                        # Gamma parameter for Relaxed Model
+                        sliderInput(ns("gamma"), "Gamma Parameter:", 
+                                    min = 0, max = 1, value = 0.5, step = 0.1),
+                        
+                        # Execute button
+                        actionButton(ns("run_model"), "Run Relaxed Model", 
+                                     class = "btn-primary", 
+                                     icon = icon("play"))
+                      )
+               ),
+               
+               # Right column - Results
+               column(8,
+                      # Results area
+                      conditionalPanel(
+                        condition = sprintf("output['%s'] == true", ns("model_run")),
+                        tabsetPanel(
+                          tabPanel("Model Visualization", 
+                                   fluidRow(
+                                     column(6, 
+                                            plotlyOutput(ns("risk_factor_plotly"), height = "500px")
+                                     ),
+                                     column(6, 
+                                            plotlyOutput(ns("deviance_plot"), height = "500px")
+                                     )
+                                   )
+                          ),
+                          # New tab for all risk factor plots
+                          tabPanel("All Risk Factors",
+                                   fluidRow(
+                                     column(12,
+                                            fluidRow(
+                                              column(6,
+                                                     sliderInput(ns("global_s_value"), "Select s:", 
+                                                                 min = 1, max = 100, value = 1, step = 1)
+                                              ),
+                                              column(6,
+                                                     sliderInput(ns("grid_columns"), "Number of columns:", 
+                                                                 min = 1, max = 9, value = 3, step = 1)
+                                              )
+                                            ),
+                                            # Dynamic UI output for all feature plots
+                                            uiOutput(ns("all_risk_factor_plots"))
+                                     )
+                                   )
+                          ),
+                          tabPanel("Predictions",
+                                   fluidRow(
+                                     column(12,
+                                            fluidRow(
+                                              column(6,
+                                                     sliderInput(ns("global_lambda_index"), "Select Lambda Index:", 
+                                                                 min = 0, max = 100, value = 0, step = 1)
+                                              ),
+                                              column(6,
+                                                     sliderInput(ns("grid_columns"), "Number of columns:", 
+                                                                 min = 1, max = 9, value = 3, step = 1)
+                                              )
+                                            ),
+                                            # Options for training or test data
+                                            fluidRow(
+                                              column(12,
+                                                     radioButtons(ns("train_or_test"), "Dataset:",
+                                                                  choices = c("Training" = "train", "Test" = "test"),
+                                                                  selected = "train",
+                                                                  inline = TRUE)
+                                              )
+                                            ),
+                                            # Dynamic UI output for all feature prediction plots
+                                            uiOutput(ns("all_feature_prediction_plots"))
+                                     )
+                                   )
+                          )
+                        )
+                      ),
+                      # Display when results are missing or standard model is missing
+                      conditionalPanel(
+                        condition = sprintf("output['%s'] != true", ns("model_run")),
+                        wellPanel(
+                          style = "margin-top: 100px; padding: 40px; text-align: center;",
+                          h4("Please ensure that a standard model has been calculated before running the Relaxed Model.")
+                        )
+                      )
+               )
+             )
+           )
+  )
+}
+
+# Server function for the model pipeline module
+modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, offset_var, distribution, selected_features_input, standard_model = NULL) {
+  moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+    
+    # Reactive value for model results
+    model_results <- reactiveVal(NULL)
+    
+    # --- Display of main variables ---
+    output$current_target_var <- renderText({ req(target_var()); target_var() })
+    output$current_weight_var <- renderText({ if(weight_var() == "") "None" else weight_var() })
+    output$current_offset_var <- renderText({ if(offset_var() == "") "None" else offset_var() })
+    
+    # --- Feature selection UI ---
+    output$feature_selection_ui <- renderUI({
+      req(selected_features_input())
+      feature_lists <- selected_features_input()
+      
+      # Extract features from the lists
+      numeric_features <- if(length(feature_lists$numeric) > 0) {
+        sapply(feature_lists$numeric, function(f) f$output_name)
+      } else {
+        character(0)
+      }
+      
+      categorical_features <- if(length(feature_lists$categorical) > 0) {
+        sapply(feature_lists$categorical, function(f) f$output_name)
+      } else {
+        character(0)
+      }
+      
+      # All available features
+      all_features <- c(numeric_features, categorical_features)
+      
+      # If no features are available
+      if(length(all_features) == 0) {
+        return(tags$div(
+          tags$p("No features available. Please select features in the 'Variable Selection' tab.")
+        ))
+      }
+      
+      # Checkboxes for feature selection
+      checkboxGroupInput(ns("selected_model_features"), 
+                         "Select features for the model:",
+                         choices = sort(all_features),
+                         selected = all_features)
+    })
+    
+    # Number of selected features
+    output$num_selected_features <- renderText({
+      req(input$selected_model_features)
+      length(input$selected_model_features)
+    })
+    
+    # Reactive function to run the model
+    observeEvent(input$run_model, {
+      req(imported_data(), target_var(), input$selected_model_features)
+      
+      if (length(input$selected_model_features) < 1) {
+        showNotification("Please select at least one feature for the model.", type = "warning")
+        return()
+      }
+      
+      withProgress(message = "Running Relaxed Model...", {
+        std_model <- standard_model()
+        features <- input$selected_model_features
+        data <- imported_data()$processed_data
+        dist_val <- distribution()
+        tw_power <- if (dist_val == "tweedie" && !is.null(std_model)) std_model$tweedie_power else NULL
+        offset_col <- if (offset_var() == "") NULL else offset_var()
+        
+        if (is.null(std_model)) {
+          showNotification("No compatible standard model found. Please run the standard model first.",
+                           type = "warning", duration = 10)
+          return(NULL)
+        }
+        
+        incProgress(0.5, detail = "Creating Relaxed Model...")
+        
+        model_results_data <- run_model_pipeline_relax(
+          pipeline_output = std_model,
+          features = features,
+          data = data,
+          distribution = dist_val,
+          target_col = target_var(),
+          weight_col = weight_var(),
+          offset_col = offset_col,
+          tweedie_power = tw_power,
+          split_index = std_model$split,
+          gamma = input$gamma,
+          sparse_matrix = input$sparse_matrix
+        )
+        
+        model_results(model_results_data)
+        incProgress(1, detail = "Done.")
+      })
+    })
+    
+    # Display whether model results are available
+    output$model_run <- reactive({
+      !is.null(model_results())
+    })
+    outputOptions(output, "model_run", suspendWhenHidden = FALSE)
+    
+    # Plot for deviance
+    output$deviance_plot <- renderPlotly({
+      req(model_results())
+      plot_deviance_train_test(model_results()$deviance_train, model_results()$deviance_test)
+    })
+    
+    # Risk factor summary
+    output$risk_factor_plotly <- renderPlotly({
+      req(model_results())
+      summary_df <- summarize_risk_factor_levels_per_s(model_results())
+      
+      # Determine maximum S values and feature count
+      max_s <- ncol(summary_df)
+      max_count <- max(summary_df, na.rm = TRUE)
+      
+      # Initial s value
+      s_value <- 1
+      
+      # Create bar plot for the initial s value
+      data_to_plot <- data.frame(
+        Feature = rownames(summary_df),
+        UniqueCounts = summary_df[, s_value]
+      )
+      
+      # Order feature names by count
+      data_to_plot$Feature <- factor(data_to_plot$Feature, 
+                                     levels = data_to_plot$Feature[order(data_to_plot$UniqueCounts)])
+      
+      # Create plotly plot
+      p <- plot_ly(data_to_plot, 
+                   x = ~UniqueCounts, 
+                   y = ~Feature, 
+                   type = 'bar', 
+                   orientation = 'h',
+                   marker = list(color = '#3498db')) %>%
+        layout(
+          title = paste("Risk Factor Levels at s =", s_value),
+          xaxis = list(
+            title = "Level Counts", 
+            range = c(0, max_count),
+            dtick = 1  # Only whole numbers on the X-axis
+          ),
+          yaxis = list(title = "Feature"),
+          margin = list(l = 100, r = 100, b = 150, t = 100, pad = 4)
+        )
+      
+      # Add slider
+      p <- p %>% layout(
+        sliders = list(
+          list(
+            active = s_value - 1,  # 0-based index
+            currentvalue = list(prefix = "s = "),
+            steps = lapply(1:max_s, function(step_s) {
+              # Data for this s value
+              step_data <- data.frame(
+                Feature = rownames(summary_df),
+                UniqueCounts = summary_df[, step_s]
+              )
+              
+              # Order feature names by count
+              step_data$Feature <- factor(step_data$Feature, 
+                                          levels = step_data$Feature[order(step_data$UniqueCounts)])
+              
+              list(
+                method = "update",
+                args = list(
+                  list(x = list(step_data$UniqueCounts)),
+                  list(title = paste("Risk Factor Levels at s =", step_s))
+                ),
+                label = as.character(step_s)
+              )
+            })
+          )
+        )
+      )
+      
+      p
+    })
+    
+    output$all_risk_factor_plots <- renderUI({
+      req(model_results(), input$global_s_value, input$grid_columns)
+      
+      # Check if there are risk factors
+      if (length(model_results()$risk_factors) == 0) {
+        return(tags$div(
+          tags$p("No risk factors found.")
+        ))
+      }
+      
+      # List of all features with risk factors
+      features_with_risk_factors <- names(model_results()$risk_factors)
+      
+      # Number of columns
+      num_columns <- input$grid_columns
+      col_width <- 12 / num_columns
+      
+      # Calculate optimal height based on column count
+      # More columns means smaller plots
+      base_height <- 400  # Base height for a plot with one column
+      adjusted_height <- base_height * (1 / sqrt(num_columns))  # Scaling factor
+      
+      # Adjust font size
+      base_font_size <- 14  # Base size for a plot with one column
+      adjusted_font_size <- max(8, base_font_size * (1 / sqrt(num_columns)))  # Min. 8px
+      
+      # Group features into rows
+      rows <- list()
+      current_row <- list()
+      col_count <- 0
+      
+      for (feature in features_with_risk_factors) {
+        plot_id <- paste0("risk_factor_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        # Create plot container
+        plot_container <- column(
+          width = col_width,
+          div(
+            style = paste0("border: 1px solid #ddd; border-radius: 4px; padding: 5px; margin-bottom: 10px; font-size: ", 
+                           adjusted_font_size, "px;"),
+            h5(style = paste0("margin: 0 0 5px 0; font-weight: bold; font-size: ", 
+                              adjusted_font_size + 2, "px;"), 
+               paste0("Feature: ", feature)),
+            div(
+              style = "width: 100%;",
+              plotlyOutput(ns(plot_id), height = paste0(round(adjusted_height), "px"))
+            )
+          )
+        )
+        
+        # Add plot to the current row
+        current_row[[length(current_row) + 1]] <- plot_container
+        col_count <- col_count + 1
+        
+        # If the row is full or it's the last feature, add the row to the list
+        if (col_count == num_columns || feature == features_with_risk_factors[length(features_with_risk_factors)]) {
+          rows[[length(rows) + 1]] <- fluidRow(do.call(tagList, current_row))
+          current_row <- list()
+          col_count <- 0
+        }
+      }
+      
+      # Combine all rows
+      do.call(tagList, rows)
+    })
+    
+    # Create all risk factor plots
+    observe({
+      req(model_results())
+      
+      # Create a plot for each feature
+      for (feature in names(model_results()$risk_factors)) {
+        # Unique plot ID
+        plot_id <- paste0("risk_factor_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        # Local environment for renderPlotly
+        local({
+          local_feature <- feature
+          local_plot_id <- plot_id
+          
+          # Create and update plot
+          output[[local_plot_id]] <- renderPlotly({
+            req(model_results(), input$global_s_value, input$grid_columns)
+            
+            # Determine weight column
+            weight_column <- if(weight_var() == "") NULL else weight_var()
+            
+            # Get risk factor matrix
+            risk_factor_matrix <- model_results()$risk_factors[[local_feature]]$risk_factor_link_dummy_encoded
+            risk_factor_cols <- colnames(risk_factor_matrix)
+            
+            # Ensure s_value is valid
+            s_value <- min(max(1, input$global_s_value), length(risk_factor_cols))
+            
+            # Number of columns for layout adjustments
+            num_columns <- input$grid_columns
+            
+            p <- plot_all_risk_factors_for_feature_no_slider(
+              pipeline_output = model_results(),
+              exposure_df = imported_data()$processed_data,
+              feature_name = local_feature,
+              exposure_col = weight_column,
+              s_value = s_value
+            )
+            
+            # Adjust font size based on column count
+            base_font_size <- 12  # Base size
+            adjusted_font_size <- max(8, base_font_size * (1 / sqrt(num_columns)))
+            
+            # Adjust layout - less space for labels with more columns
+            margin_l <- max(20, 50 * (1 / sqrt(num_columns)))
+            margin_b <- max(20, 40 * (1 / sqrt(num_columns)))
+            
+            # Plot with optimized layout
+            p <- p %>% 
+              layout(
+                autosize = TRUE,
+                margin = list(l = margin_l, r = 10, b = margin_b, t = 10, pad = 2),
+                font = list(size = adjusted_font_size),
+                xaxis = list(tickfont = list(size = adjusted_font_size)),
+                yaxis = list(tickfont = list(size = adjusted_font_size))
+              ) %>%
+              config(responsive = TRUE, displayModeBar = FALSE) %>%
+              plotly::event_register("plotly_relayout")
+            
+            p
+          })
+          
+          # Observer for slider changes that only updates the risk factor data
+          observeEvent(input$global_s_value, {
+            req(model_results())
+            
+            # Get risk factor matrix
+            risk_factor_matrix <- model_results()$risk_factors[[local_feature]]$risk_factor_link_dummy_encoded
+            categories <- as.character(rownames(risk_factor_matrix))
+            risk_factor_cols <- colnames(risk_factor_matrix)
+            
+            # Current s value 
+            current_s_value <- min(max(1, input$global_s_value), length(risk_factor_cols))
+            
+            # Prepare data as proper lists, not named vectors
+            new_y_values <- as.numeric(risk_factor_matrix[, current_s_value])
+            new_hover_texts <- lapply(seq_along(categories), function(i) {
+              paste("Category:", categories[i], 
+                    "<br>Risk Factor:", format(new_y_values[i], digits = 5, nsmall = 5))
+            })
+            
+            plotlyProxy(ns(local_plot_id), session) %>%
+              plotlyProxyInvoke(
+                "restyle",
+                list(
+                  y = list(new_y_values),
+                  text = list(new_hover_texts)
+                ),
+                list(1)
+              )
+          })
+        })
+      }
+    })
+    
+    output$all_feature_prediction_plots <- renderUI({
+      req(model_results(), input$global_lambda_index, input$grid_columns)
+      
+      # List of all features
+      features <- names(model_results()$risk_factors)
+      
+      # Check if features are available
+      if (length(features) == 0) {
+        return(tags$div(
+          tags$p("No features found for prediction.")
+        ))
+      }
+      
+      # Layout configuration
+      num_columns <- input$grid_columns
+      col_width <- 12 / num_columns
+      
+      # Adjust height and font size
+      base_height <- 400
+      adjusted_height <- base_height * (1 / sqrt(num_columns))
+      base_font_size <- 14
+      adjusted_font_size <- max(8, base_font_size * (1 / sqrt(num_columns)))
+      
+      # Prepare rows and columns
+      rows <- list()
+      current_row <- list()
+      col_count <- 0
+      
+      # Create plots for each feature
+      for (feature in features) {
+        plot_id <- paste0("feature_prediction_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        # Create plot container
+        plot_container <- column(
+          width = col_width,
+          div(
+            style = paste0("border: 1px solid #ddd; border-radius: 4px; padding: 5px; margin-bottom: 10px; font-size: ", 
+                           adjusted_font_size, "px;"),
+            # h5(style = paste0("margin: 0 0 5px 0; font-weight: bold; font-size: ", 
+            #                   adjusted_font_size + 2, "px;"), 
+            #    paste0("Feature: ", feature)),
+            div(
+              style = "width: 100%;",
+              plotlyOutput(ns(plot_id), height = paste0(round(adjusted_height), "px"))
+            )
+          )
+        )
+        
+        # Add plot to the current row
+        current_row[[length(current_row) + 1]] <- plot_container
+        col_count <- col_count + 1
+        
+        # Complete row if full or last feature
+        if (col_count == num_columns || feature == features[length(features)]) {
+          rows[[length(rows) + 1]] <- fluidRow(do.call(tagList, current_row))
+          current_row <- list()
+          col_count <- 0
+        }
+      }
+      
+      # Combine all rows
+      do.call(tagList, rows)
+    })
+    
+    # Plot creation for each feature
+    observe({
+      
+      req(model_results(), input$global_lambda_index, input$train_or_test)
+      
+      # Create a plot for each feature
+      for (feature in names(model_results()$risk_factors)) {
+        plot_id <- paste0("feature_prediction_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        local({
+          local_feature <- feature
+          local_plot_id <- plot_id
+          
+          # Create plot
+          output[[local_plot_id]] <- renderPlotly({
+            req(model_results(), input$global_lambda_index, input$grid_columns, input$train_or_test)
+            
+            # Weight column and target column
+            weight_column <- weight_var()
+            target_column <- target_var()
+            
+            # Validate lambda indices
+            lambda_index <- min(max(0, input$global_lambda_index), 
+                                ncol(model_results()$preds_train) - 1)
+            
+            # Create plot
+            p <- plot_feature_predictions(
+              pipeline = model_results(),
+              data = imported_data()$processed_data,
+              feature_name = local_feature,
+              target_col = target_column,
+              weight_col = weight_column,
+              lambda_index = lambda_index,
+              train_or_test = input$train_or_test
+            )
+            
+            # Adjust layout
+            num_columns <- input$grid_columns
+            base_font_size <- 12
+            adjusted_font_size <- max(8, base_font_size * (1 / sqrt(num_columns)))
+            margin_l <- max(20, 50 * (1 / sqrt(num_columns)))
+            margin_b <- max(20, 40 * (1 / sqrt(num_columns)))
+            
+            # Optimize plot layout
+            p <- p %>% 
+              layout(
+                title = NULL,  # Remove title, as it's already in the container
+                autosize = TRUE,
+                margin = list(l = margin_l, r = 10, b = margin_b, t = 10, pad = 2),
+                font = list(size = adjusted_font_size),
+                xaxis = list(tickfont = list(size = adjusted_font_size)),
+                yaxis = list(tickfont = list(size = adjusted_font_size)),
+                legend = list(
+                  orientation = "h",
+                  x = 0.5,
+                  y = 1.05,
+                  xanchor = "center",
+                  font = list(size = adjusted_font_size)
+                )
+              ) %>%
+              config(responsive = TRUE, displayModeBar = FALSE) %>%
+              plotly::event_register("plotly_relayout")
+            
+            p
+          })
+        })
+      }
+    })
+    # Return values of the module
+    return(list(
+      model_results = model_results,
+      selected_features = reactive(input$selected_model_features),
+      distribution = reactive(input$distribution),
+      tweedie_power = reactive(if(input$distribution == "tweedie") input$tweedie_power else NULL),
+      model_type = reactive(input$model_type)
+    ))
+  })
+}
