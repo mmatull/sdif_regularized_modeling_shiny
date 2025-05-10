@@ -1721,7 +1721,7 @@ plot_feature_predictions <- function(pipeline, data, feature_name, target_col = 
   preds_field <- paste0("preds_", train_or_test)
   
   # Get appropriate column index for model
-  column_index <- lambda_index + 1
+  column_index <- lambda_index 
   
   if (length(column_index) == 0) {
     stop("Error: The column index was not found. Maybe different lambda paths were used.")
