@@ -1,6 +1,6 @@
-# modules/mod_model_pipeline.R
+# modules/mod_model_pipeline_relax.R
 
-# UI function for the model pipeline module
+# UI function for the model relax pipeline module
 modelPipelineRelaxUI <- function(id) {
   ns <- NS(id)
   
@@ -67,7 +67,7 @@ modelPipelineRelaxUI <- function(id) {
                           tabPanel("Model Visualization", 
                                    fluidRow(
                                      column(6, 
-                                            plotlyOutput(ns("risk_factor_plotly"), height = "500px")
+                                            plotlyOutput(ns("risk_factor_plotly"), height = "800px")
                                      ),
                                      column(6, 
                                             plotlyOutput(ns("deviance_plot"), height = "500px")
@@ -99,10 +99,10 @@ modelPipelineRelaxUI <- function(id) {
                                             fluidRow(
                                               column(6,
                                                      sliderInput(ns("global_lambda_index"), "Select Lambda Index:", 
-                                                                 min = 0, max = 100, value = 0, step = 1)
+                                                                 min = 1, max = 100, value = 1, step = 1)
                                               ),
                                               column(6,
-                                                     sliderInput(ns("grid_columns"), "Number of columns:", 
+                                                     sliderInput(ns("grid_columns_2"), "Number of columns:", 
                                                                  min = 1, max = 9, value = 3, step = 1)
                                               )
                                             ),
@@ -264,7 +264,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
         UniqueCounts = summary_df[, s_value]
       )
       
-      # Order feature names by count
+      # Sort feature names by count
       data_to_plot$Feature <- factor(data_to_plot$Feature, 
                                      levels = data_to_plot$Feature[order(data_to_plot$UniqueCounts)])
       
@@ -276,14 +276,15 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
                    orientation = 'h',
                    marker = list(color = '#3498db')) %>%
         layout(
-          title = paste("Risk Factor Levels at s =", s_value),
+          #title = paste("Risk Factor Levels at s =", s_value),
           xaxis = list(
             title = "Level Counts", 
             range = c(0, max_count),
-            dtick = 1  # Only whole numbers on the X-axis
+            dtick = 1  # Only whole numbers on X axis
           ),
-          yaxis = list(title = "Feature"),
-          margin = list(l = 100, r = 100, b = 150, t = 100, pad = 4)
+          yaxis = list(title = ""), 
+          #yaxis = list(title = "Feature"),
+          margin = list(l = 100, r = 50, b = 150, t = 50, pad = 4)
         )
       
       # Add slider
@@ -299,15 +300,15 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
                 UniqueCounts = summary_df[, step_s]
               )
               
-              # Order feature names by count
+              # Sort feature names by count
               step_data$Feature <- factor(step_data$Feature, 
                                           levels = step_data$Feature[order(step_data$UniqueCounts)])
               
               list(
                 method = "update",
                 args = list(
-                  list(x = list(step_data$UniqueCounts)),
-                  list(title = paste("Risk Factor Levels at s =", step_s))
+                  list(x = list(step_data$UniqueCounts))#,
+                  #list(title = paste("Risk Factor Levels at s =", step_s))
                 ),
                 label = as.character(step_s)
               )
@@ -318,6 +319,27 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
       
       p
     })
+    
+    # Observe the active model to set the maximum S values
+    observe({
+      req(model_results())
+      model <- model_results()
+      
+      if (!is.null(model$base_level)) {
+        s_values <- gsub("s", "", colnames(model$base_level)) 
+        max_s <- max(as.numeric(s_values), na.rm = TRUE) + 1 
+        
+        # Update sliders with the maximum available S value
+        updateSliderInput(session, "global_s_value", 
+                          max = max_s,
+                          value = min(input$global_s_value, max_s))
+        
+        updateSliderInput(session, "global_lambda_index", 
+                          max = max_s,
+                          value = min(input$global_lambda_index, max_s))
+      }
+    })
+    
     
     output$all_risk_factor_plots <- renderUI({
       req(model_results(), input$global_s_value, input$grid_columns)
@@ -401,7 +423,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
           
           # Create and update plot
           output[[local_plot_id]] <- renderPlotly({
-            req(model_results(), input$global_s_value, input$grid_columns)
+            req(model_results(), input$grid_columns)
             
             # Determine weight column
             weight_column <- if(weight_var() == "") NULL else weight_var()
@@ -411,7 +433,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
             risk_factor_cols <- colnames(risk_factor_matrix)
             
             # Ensure s_value is valid
-            s_value <- min(max(1, input$global_s_value), length(risk_factor_cols))
+            s_value <- min(max(1, isolate(input$global_s_value)), length(risk_factor_cols))
             
             # Number of columns for layout adjustments
             num_columns <- input$grid_columns
@@ -442,12 +464,28 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
                 yaxis = list(tickfont = list(size = adjusted_font_size))
               ) %>%
               config(responsive = TRUE, displayModeBar = FALSE) %>%
-              plotly::event_register("plotly_relayout")
+              plotly::event_register("plotly_restyle")
             
             p
           })
+        })
+      }
+    })
+    
+    # Separate observer for s_value slider changes
+    observe({
+      req(model_results())
+      
+      for (feature in names(model_results()$risk_factors)) {
+        # Unique plot ID
+        plot_id <- paste0("risk_factor_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        # Local environment
+        local({
+          local_feature <- feature
+          local_plot_id <- plot_id
           
-          # Observer for slider changes that only updates the risk factor data
+          # Observer for slider changes
           observeEvent(input$global_s_value, {
             req(model_results())
             
@@ -481,7 +519,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
     })
     
     output$all_feature_prediction_plots <- renderUI({
-      req(model_results(), input$global_lambda_index, input$grid_columns)
+      req(model_results(), input$global_lambda_index, input$grid_columns_2)
       
       # List of all features
       features <- names(model_results()$risk_factors)
@@ -494,7 +532,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
       }
       
       # Layout configuration
-      num_columns <- input$grid_columns
+      num_columns <- input$grid_columns_2
       col_width <- 12 / num_columns
       
       # Adjust height and font size
@@ -546,8 +584,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
     
     # Plot creation for each feature
     observe({
-      
-      req(model_results(), input$global_lambda_index, input$train_or_test)
+      req(model_results(), input$train_or_test)
       
       # Create a plot for each feature
       for (feature in names(model_results()$risk_factors)) {
@@ -559,14 +596,14 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
           
           # Create plot
           output[[local_plot_id]] <- renderPlotly({
-            req(model_results(), input$global_lambda_index, input$grid_columns, input$train_or_test)
+            req(model_results(), input$grid_columns_2, input$train_or_test)
             
             # Weight column and target column
             weight_column <- weight_var()
             target_column <- target_var()
             
             # Validate lambda indices
-            lambda_index <- min(max(0, input$global_lambda_index), 
+            lambda_index <- min(max(0, isolate(input$global_lambda_index)), 
                                 ncol(model_results()$preds_train) - 1)
             
             # Create plot
@@ -581,7 +618,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
             )
             
             # Adjust layout
-            num_columns <- input$grid_columns
+            num_columns <- input$grid_columns_2
             base_font_size <- 12
             adjusted_font_size <- max(8, base_font_size * (1 / sqrt(num_columns)))
             margin_l <- max(20, 50 * (1 / sqrt(num_columns)))
@@ -605,9 +642,96 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
                 )
               ) %>%
               config(responsive = TRUE, displayModeBar = FALSE) %>%
-              plotly::event_register("plotly_relayout")
+              plotly::event_register("plotly_restyle")
             
             p
+          })
+        })
+      }
+    })
+    
+    # Separate observer for lambda slider updates
+    observe({
+      req(model_results())
+      
+      for (feature in names(model_results()$risk_factors)) {
+        plot_id <- paste0("feature_prediction_plot_", gsub("[^a-zA-Z0-9]", "_", feature))
+        
+        local({
+          local_feature <- feature
+          local_plot_id <- plot_id
+          
+          # Observer for lambda slider changes
+          observeEvent(input$global_lambda_index, {
+            req(model_results(), input$train_or_test)
+            
+            # Weight column and target column
+            weight_column <- weight_var()
+            target_column <- target_var()
+            
+            # Validate lambda indices
+            lambda_index <- min(max(0, input$global_lambda_index), 
+                                ncol(model_results()$preds_train) - 1)
+            
+            # Set train_or_test-specific variables
+            train_or_test <- input$train_or_test
+            train_or_test <- tolower(train_or_test)  # Convert to lowercase to match function parameters
+            index_field <- paste0(train_or_test, "_index")
+            preds_field <- paste0("preds_", train_or_test)
+            
+            tryCatch({
+              # Select appropriate data based on train_or_test parameter
+              selected_data <- imported_data()$processed_data[model_results()$split[[index_field]],]
+              
+              # Extract feature values and ensure they're factors for proper grouping
+              feature_values <- selected_data[[local_feature]]
+              if (!is.factor(feature_values)) {
+                feature_values <- factor(feature_values)
+              }
+              
+              # Calculate predicted values from pipeline model (only the part we need to update)
+              pred_values <- selected_data %>%
+                mutate(
+                  prediction = model_results()[[preds_field]][,lambda_index]
+                ) %>%
+                group_by(feature_level = feature_values) %>%
+                summarise(
+                  pred_rate = sum(prediction * !!sym(weight_column)) / sum(!!sym(weight_column)),
+                  .groups = "drop"
+                )
+              
+              # Get the feature levels in the correct order
+              if (is.factor(pred_values$feature_level)) {
+                levels_ordered <- levels(pred_values$feature_level)
+              } else {
+                levels_ordered <- sort(unique(pred_values$feature_level))
+              }
+              
+              # Make sure data is in the correct order to match the plot
+              pred_values <- pred_values %>%
+                mutate(feature_level = factor(feature_level, levels = levels_ordered)) %>%
+                arrange(feature_level)
+              
+              # Create hover text in same format as original plot
+              hover_text <- paste(
+                "Level:", pred_values$feature_level, 
+                "<br>Prediction:", format(pred_values$pred_rate, digits = 5, nsmall = 5)
+              )
+              
+              # Update trace 3 (index 2) with the new prediction values
+              plotlyProxy(ns(local_plot_id), session) %>%
+                plotlyProxyInvoke(
+                  "restyle",
+                  list(
+                    y = list(pred_values$pred_rate),
+                    text = list(hover_text)
+                  ),
+                  list(2)  # Update 3rd trace (index 2) - the prediction line
+                )
+            }, error = function(e) {
+              # Log error for debugging but don't break app
+              message(paste("Error updating predictions for feature", local_feature, ":", e$message))
+            })
           })
         })
       }
