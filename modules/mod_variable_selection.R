@@ -358,7 +358,15 @@ variableSelectionServer <- function(id, imported_data) {
         # Categorical data: convert to factor
         if(is.character(processed) || is.factor(processed)) {
           # For text/factor data: sort alphabetically
-          levels_sorted <- mixedsort(unique(processed[!is.na(processed)]))
+          processed_unique <- unique(processed[!is.na(processed)])
+          if (any(stringr::str_detect(processed_unique, "^[\\(\\[]\\d+,\\d+[\\)\\]]$"))){
+            levels_sorted <- sort_interval_strings(processed_unique)
+          } else {
+            levels_sorted <- mixedsort(processed_unique)
+          }
+          # levels_sorted <- mixedsort(unique(processed[!is.na(processed)]))
+          # processed <- factor(processed, levels = levels_sorted)
+          
           processed <- factor(processed, levels = levels_sorted)
           
           # Missing values as separate category
@@ -460,6 +468,7 @@ variableSelectionServer <- function(id, imported_data) {
         # Add processed data
         current_data[[output_name]] <- processed
         processed_data(current_data)
+
       }
       
       # Feedback to user

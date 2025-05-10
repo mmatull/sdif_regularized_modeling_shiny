@@ -20,6 +20,7 @@ library(rlang)
 library(tweedie)
 library(plotly)
 library(openxlsx)
+library(stringr)
 
 options(shiny.maxRequestSize = 1000 * 1024^2) 
 
@@ -36,6 +37,7 @@ source("core/model_pipeline.R")
 source("core/plot.R") 
 source("core/prepare_data.R") 
 source("core/util.R")
+source("core/util_shiny.R")
 
 # dark <- bs_theme(version = 5, bootswatch = "darkly") %>%
 #   bs_add_rules("
