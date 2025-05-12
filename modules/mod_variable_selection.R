@@ -359,7 +359,7 @@ variableSelectionServer <- function(id, imported_data) {
         if(is.character(processed) || is.factor(processed)) {
           # For text/factor data: sort alphabetically
           processed_unique <- unique(processed[!is.na(processed)])
-          if (any(stringr::str_detect(processed_unique, "^[\\(\\[]\\d+,\\d+[\\)\\]]$"))){
+          if (any(stringr::str_detect(processed_unique, "^[\\(\\[]-?\\d+(?:\\.\\d+)?\\s*,\\s*-?\\d+(?:\\.\\d+)?[\\)\\]]$"))){
             levels_sorted <- sort_interval_strings(processed_unique)
           } else {
             levels_sorted <- mixedsort(processed_unique)

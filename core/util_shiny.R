@@ -40,11 +40,23 @@ sort_interval_strings <- function(interval_strings) {
   if (!is.character(interval_strings)) {
     stop("Input must be a character vector of interval strings")
   }
+  # Define missing values
+  missing_start <- c("-1")
+  missing_end <- c("9999", "Missing")
+  
+  # Split into missing and interval parts
+  is_missing_start <- interval_strings %in% missing_start
+  is_missing_end <- interval_strings %in% missing_end
+  
+  missing_part_start <- interval_strings[is_missing_start]
+  missing_part_end <- interval_strings[is_missing_end]
+  interval_part <- interval_strings[!is_missing_start & !is_missing_end]
   
   # Internal parser for interval boundaries
   extract_boundaries <- function(s) {
     # Remove all brackets/parentheses and whitespace
-    clean <- gsub("[][()]", "", gsub(" ", "", s))
+    clean <- gsub("[][()]", "",  s)
+    clean <- gsub(" ", "", clean)
     # Split and convert to numeric
     parts <- as.numeric(strsplit(clean, ",")[[1]])
     if (length(parts) != 2) {
@@ -53,12 +65,11 @@ sort_interval_strings <- function(interval_strings) {
     parts
   }
   
-  # Parse all intervals
-  boundaries <- sapply(interval_strings, extract_boundaries)
-  
-  # Sort by lower then upper bound
+  # Parse and sort intervals
+  boundaries <- sapply(interval_part, extract_boundaries)
   sorted_order <- order(boundaries[1, ], boundaries[2, ])
+  sorted_intervals <- interval_part[sorted_order]
   
-  # Return strings in sorted order
-  interval_strings[sorted_order]
+  # Combine everything
+  c(missing_part_start, sorted_intervals, missing_part_end)
 }
