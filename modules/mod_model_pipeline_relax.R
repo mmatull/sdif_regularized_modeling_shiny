@@ -329,14 +329,25 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
         s_values <- gsub("s", "", colnames(model$base_level)) 
         max_s <- max(as.numeric(s_values), na.rm = TRUE) + 1 
         
-        # Update sliders with the maximum available S value
-        updateSliderInput(session, "global_s_value", 
-                          max = max_s,
-                          value = min(input$global_s_value, max_s))
+        # Only modify the slider if necessary
+        current_value <- isolate(input$global_s_value)
+        current_max <- isolate(input$global_s_value_max)
         
-        updateSliderInput(session, "global_lambda_index", 
-                          max = max_s,
-                          value = min(input$global_lambda_index, max_s))
+        if (is.null(current_max) || current_max != max_s || current_value > max_s) {
+          updateSliderInput(session, "global_s_value", 
+                            max = max_s,
+                            value = min(isolate(input$global_s_value), max_s))
+        }
+        
+        # Same for lambda slider
+        current_lambda <- isolate(input$global_lambda_index)
+        current_lambda_max <- isolate(input$global_lambda_index_max)
+        
+        if (is.null(current_lambda_max) || current_lambda_max != max_s || current_lambda > max_s) {
+          updateSliderInput(session, "global_lambda_index", 
+                            max = max_s,
+                            value = min(isolate(input$global_lambda_index), max_s))
+        }
       }
     })
     
@@ -495,7 +506,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
             risk_factor_cols <- colnames(risk_factor_matrix)
             
             # Current s value 
-            current_s_value <- min(max(1, input$global_s_value), length(risk_factor_cols))
+            current_s_value <- min(max(1, isolate(input$global_s_value)), length(risk_factor_cols))
             
             # Prepare data as proper lists, not named vectors
             new_y_values <- as.numeric(risk_factor_matrix[, current_s_value])
@@ -670,7 +681,7 @@ modelPipelineRelaxServer <- function(id, imported_data, target_var, weight_var, 
             target_column <- target_var()
             
             # Validate lambda indices
-            lambda_index <- min(max(0, input$global_lambda_index), 
+            lambda_index <- min(max(0, isolate(input$global_lambda_index)), 
                                 ncol(model_results()$preds_train) - 1)
             
             # Set train_or_test-specific variables
