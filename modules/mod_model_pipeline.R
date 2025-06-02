@@ -59,7 +59,7 @@ modelPipelineUI <- function(id) {
                         
                         # Test Set Size
                         sliderInput(ns("test_size"), "Test Set Size (%):",
-                                    min = 10, max = 40, value = 20, step = 5),
+                                    min = 0, max = 40, value = 20, step = 5),
                         
                         # Run Button
                         actionButton(ns("run_model"), "Run Model", 
@@ -229,6 +229,7 @@ modelPipelineServer <- function(id, imported_data, target_var, weight_var, offse
         
         # Run the model pipeline
         tryCatch({
+
           model_results_data <- run_model_pipeline(
             features = features, 
             data = data, 

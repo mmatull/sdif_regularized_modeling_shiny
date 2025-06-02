@@ -1,6 +1,7 @@
 # global.R
 library(shiny)
 library(shinythemes)
+library(shinyBS)
 library(DT)
 library(ggplot2)
 library(dplyr)
